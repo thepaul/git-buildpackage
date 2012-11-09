@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # $Id: git-pbuilder,v 1.27 2012/01/13 04:12:35 eagle Exp $
 #
 # git-pbuilder -- Wrapper around pbuilder for git-buildpackage
@@ -75,7 +75,8 @@ if [ ! -x /usr/sbin/"$BUILDER" ]; then
 fi
 
 # Default options come from the environment.
-OPTIONS="$GIT_PBUILDER_OPTIONS"
+# eval GIT_PBUILDER_OPTIONS into an array, as some arguments may have quoting
+eval "OPTIONS=( $GIT_PBUILDER_OPTIONS )"
 OUTPUT_DIR="${GIT_PBUILDER_OUTPUT_DIR:-../}"
 
 # How we handle options depends on what type of builder we're using.  Ignore
@@ -94,7 +95,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
             : ${DIST:=sid}
             if [ -n "$ARCH" ] ; then
                 BASE="$PBUILDER_BASE/base-$DIST$EXT-$ARCH.tgz"
-                OPTIONS="$OPTIONS --architecture $ARCH"
+                OPTIONS+=( --architecture "$ARCH" )
             elif [ "$DIST" = 'sid' ] ; then
                 if [ -f "$PBUILDER_BASE/base-sid.tgz" ] ; then
                     BASE="$PBUILDER_BASE/base-sid.tgz"
@@ -104,7 +105,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
             else
                 BASE="$PBUILDER_BASE/base-$DIST$EXT.tgz"
             fi
-            OPTIONS="$OPTIONS --basetgz $BASE"
+            OPTIONS+=( --basetgz "$BASE" )
 
             # Make sure the base tarball exists.
             if [ ! -f "$BASE" ] && [ "$1" != "create" ]; then
@@ -115,7 +116,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
             # Set --debian-etch-workaround if DIST is etch.  Assume that
             # everything else is new enough that it will be fine.
             if [ "$DIST" = 'etch' ] || [ "$DIST" = 'ebo' ] ; then
-                OPTIONS="$OPTIONS --debian-etch-workaround"
+                OPTIONS+=( --debian-etch-workaround )
             fi
             ;;
     
@@ -131,7 +132,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
             : ${DIST:=sid}
             if [ -n "$ARCH" ] ; then
                 BASE="$COWBUILDER_BASE/base-$DIST$EXT-$ARCH.cow"
-                OPTIONS="$OPTIONS --architecture $ARCH"
+                OPTIONS+=( --architecture "$ARCH" )
             elif [ "$DIST" = 'sid' ] ; then
                 if [ -d "$COWBUILDER_BASE/base-sid.cow" ] ; then
                     BASE="$COWBUILDER_BASE/base-sid.cow"
@@ -141,7 +142,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
             else
                 BASE="$COWBUILDER_BASE/base-$DIST$EXT.cow"
             fi
-            OPTIONS="$OPTIONS --basepath $BASE"
+            OPTIONS+=( --basepath "$BASE" )
     
             # Make sure the base directory exists.
             if [ ! -d "$BASE" ] && [ "$1" != "create" ]; then
@@ -152,7 +153,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
             # Set --debian-etch-workaround if DIST is etch.  Assume that
             # everything else is new enough that it will be fine.
             if [ "$DIST" = 'etch' ] || [ "$DIST" = 'ebo' ] ; then
-                OPTIONS="$OPTIONS --debian-etch-workaround"
+                OPTIONS+=( --debian-etch-workaround )
             fi
             ;;
     
@@ -171,7 +172,7 @@ if [ no != "$GIT_PBUILDER_AUTOCONF" ] ; then
                 echo "Cannot read configuration file $QEMUCONFIG" >&2
                 exit 1
             fi
-            OPTIONS="$OPTIONS --config $QEMUCONFIG"
+            OPTIONS+=( --config "$QEMUCONFIG" )
             ;;
     
         *)
@@ -194,19 +195,19 @@ update|create|login)
     # it.  Instead, check if the user has a .pbuilderrc and, if so, explicitly
     # add it as a configuration file.
     if [ -f "$HOME/.pbuilderrc" ] ; then
-        OPTIONS="$OPTIONS --configfile $HOME/.pbuilderrc"
+        OPTIONS+=( --configfile "$HOME/.pbuilderrc" )
     fi
 
     # Run the builder.
     if [ no = "$GIT_PBUILDER_AUTOCONF" ] ; then
-        sudo "$BUILDER" --"$action" $OPTIONS "$@"
+        sudo "$BUILDER" --"$action" "${OPTIONS[@]}" "$@"
     else
         if [ "$EXT" = '-backports' ] ; then
             OTHERMIRROR="deb $BACKPORTS $DIST$EXT main"
             sudo "$BUILDER" --"$action" --dist "$DIST" \
-                --othermirror "$OTHERMIRROR" $OPTIONS "$@"
+                --othermirror "$OTHERMIRROR" "${OPTIONS[@]}" "$@"
         else
-            sudo "$BUILDER" --"$action" --dist "$DIST" $OPTIONS "$@"
+            sudo "$BUILDER" --"$action" --dist "$DIST" "${OPTIONS[@]}" "$@"
         fi
     fi
     exit $?
@@ -235,18 +236,27 @@ fi
 # or -I flags unless we're using source format 1.0.
 if [ ! -f debian/source/format ] || grep -qs '^1.0' debian/source/format ; then
     echo 'Source format 1.0 detected, adding exclude flags'
-    DEBBUILDOPTS="-i'(?:^|/)\\.git(attributes)?(?:\$|/.*\$)' -I.git $*"
+    DEBBUILDOPTS="-i'(?:^|/)\\.git(attributes)?(?:\$|/.*\$)' -I.git"
 else
-    DEBBUILDOPTS="$*"
+    DEBBUILDOPTS=""
 fi
+
+shell_quote () {
+    echo "$1" | sed -e "s/'/'\"'\"'/g" -e "1 s/^/'/" -e "\$ s/\$/'/"
+}
+
+for arg in "$@"; do
+    DEBBUILDOPTS+=" $(shell_quote "$arg")"
+done
 
 # Now we can finally run pdebuild.  The quoting here is tricky, but this
 # seems to pass everything through properly.
 if [ no = "$GIT_PBUILDER_AUTOCONF" ] ; then
-    pdebuild --pbuilder "$BUILDER" --debbuildopts "$DEBBUILDOPTS" -- $OPTIONS
+    pdebuild --pbuilder "$BUILDER" --debbuildopts "$DEBBUILDOPTS" -- \
+        "${OPTIONS[@]}"
 else
     pdebuild --buildresult $OUTPUT_DIR --pbuilder "$BUILDER" \
-        --debbuildopts "$DEBBUILDOPTS" -- $OPTIONS
+        --debbuildopts "$DEBBUILDOPTS" -- "${OPTIONS[@]}"
 fi
 status="$?"
 if [ -n "`ls ../*_source.changes`" ] ; then
