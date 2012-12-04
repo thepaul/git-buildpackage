@@ -7,7 +7,6 @@ import unittest
 import gbp.log
 import gbp.deb.git
 import gbp.errors
-import gbp.scripts.buildpackage as buildpackage
 
 class DebianGitTestRepo(unittest.TestCase):
     """Scratch repo for a single test"""
@@ -24,7 +23,7 @@ class DebianGitTestRepo(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.tmpdir)
 
-    def add_file(self, name, content=None):
+    def add_file(self, name, content=None, msg=None):
         """
         Add a single file with name I{name} and content I{content}. If
         I{content} is C{none} the content of the file is undefined.
@@ -35,7 +34,12 @@ class DebianGitTestRepo(unittest.TestCase):
         @type content: C{str}
         """
         path = os.path.join(self.repo.path, name)
+
+        d = os.path.dirname(path)
+        if not os.path.exists(d):
+            os.makedirs(d)
+
         with file(path, 'w+') as f:
             content == None or f.write(content)
         self.repo.add_files(name, force=True)
-        self.repo.commit_files(path, "added %s" % name)
+        self.repo.commit_files(path, msg or "added %s" % name)

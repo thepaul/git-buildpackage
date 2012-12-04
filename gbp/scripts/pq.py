@@ -22,17 +22,16 @@ import os
 import shutil
 import sys
 import tempfile
-from gbp.config import (GbpOptionParserDebian, GbpOptionGroup)
+from gbp.config import GbpOptionParserDebian
 from gbp.git import (GitRepositoryError, GitRepository)
-from gbp.command_wrappers import (Command, GitCommand, RunAtCommand,
-                                  CommandExecFailed)
+from gbp.command_wrappers import (GitCommand, CommandExecFailed)
 from gbp.errors import GbpError
 import gbp.log
 from gbp.patch_series import (PatchSeries, Patch)
 from gbp.scripts.common.pq import (is_pq_branch, pq_branch_name, pq_branch_base,
                                  write_patch, switch_to_pq_branch,
                                  apply_single_patch, apply_and_commit_patch,
-                                 drop_pq)
+                                 drop_pq, get_maintainer_from_control)
 
 PATCH_DIR = "debian/patches/"
 SERIES_FILE = os.path.join(PATCH_DIR,"series")
@@ -132,7 +131,11 @@ def import_quilt_patches(repo, branch, series, tries, force):
         tmpdir, series = safe_patches(series)
 
     queue = PatchSeries.read_series_file(series)
+
+    i = len(commits)
     for commit in commits:
+        if len(commits):
+            gbp.log.info("%d %s left" % (i, 'tries' if i > 1 else 'try'))
         try:
             gbp.log.info("Trying to apply patches at '%s'" % commit)
             repo.create_branch(pq_branch, commit)
@@ -143,7 +146,9 @@ def import_quilt_patches(repo, branch, series, tries, force):
         for patch in queue:
             gbp.log.debug("Applying %s" % patch.path)
             try:
-                apply_and_commit_patch(repo, patch, patch.topic)
+                apply_and_commit_patch(repo, patch,
+                                       get_maintainer_from_control,
+                                       patch.topic)
             except (GbpError, GitRepositoryError):
                 repo.set_branch(branch)
                 repo.delete_branch(pq_branch)
@@ -151,6 +156,7 @@ def import_quilt_patches(repo, branch, series, tries, force):
         else:
             # All patches applied successfully
             break
+        i-=1
     else:
         raise GbpError("Couldn't apply patches")
 
@@ -246,7 +252,9 @@ def main(argv):
             rebase_pq(repo, current)
         elif action == "apply":
             patch = Patch(patchfile)
-            apply_single_patch(repo, current, patch, options.topic)
+            apply_single_patch(repo, current, patch,
+                               get_maintainer_from_control,
+                               options.topic)
         elif action == "switch":
             switch_pq(repo, current)
     except CommandExecFailed:

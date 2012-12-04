@@ -256,7 +256,7 @@ def test_find_tag():
     >>> repo.find_tag('HEAD', pattern='foo*')
     Traceback (most recent call last):
     ...
-    GitRepositoryError: Can't find tag for HEAD
+    GitRepositoryError: Can't find tag for HEAD. Git error: fatal: No names found, cannot describe anything.
     """
 
 def test_move_tag():
@@ -373,6 +373,16 @@ def test_get_commits():
     True
     >>> len(repo.get_commits(num=1)) == 1
     True
+    >>> commits2 = repo.get_commits(since='HEAD~1')
+    >>> len(commits2) == 1
+    True
+    >>> commits2[0] == commits[0]
+    True
+    >>> commits2 = repo.get_commits(until='HEAD~1')
+    >>> len(commits2) == 1
+    True
+    >>> commits2[0] == commits[-1]
+    True
     >>> repo.get_commits(paths=['foo', 'bar'])
     []
     >>> repo.get_commits(paths=['testfile']) == commits
@@ -408,6 +418,23 @@ def test_get_commit_info():
     True
     >>> info['files']
     defaultdict(<type 'list'>, {'M': ['testfile']})
+    """
+
+def test_diff():
+    """
+    Test git-diff
+
+    Methods tested:
+         - L{gbp.git.GitRepository.diff}
+
+    >>> import gbp.git
+    >>> repo = gbp.git.GitRepository(repo_dir)
+    >>> len(repo.diff('HEAD~1', 'HEAD')) > 3
+    True
+    >>> len(repo.diff('HEAD~1', 'HEAD', 'testfile')) > 3
+    True
+    >>> len(repo.diff('HEAD~1', 'HEAD', 'filenotexist')) == 0
+    True
     """
 
 def test_mirror_clone():
@@ -751,6 +778,31 @@ def test_get_merge_base():
     Traceback (most recent call last):
     ...
     GitRepositoryError: Failed to get common ancestor: fatal: Not a valid object name doesnotexist
+    """
+
+def test_cmd_has_feature():
+    r"""
+    Methods tested:
+        - L{gbp.git.GitRepository._cmd_has_feature}
+
+    >>> import gbp.git
+    >>> repo = gbp.git.GitRepository(repo_dir)
+    >>> repo._cmd_has_feature("commit", "a")
+    True
+    >>> repo._cmd_has_feature("commit", "reuse-message")
+    True
+    >>> repo._cmd_has_feature("merge", "n")
+    True
+    >>> repo._cmd_has_feature("merge", "stat")
+    True
+    >>> repo._cmd_has_feature("format-patch", "cc")
+    True
+    >>> repo._cmd_has_feature("merge", "foobaroption")
+    False
+    >>> repo._cmd_has_feature("foobarcmd", "foobaroption")
+    Traceback (most recent call last):
+    ...
+    GitRepositoryError: Invalid git command: foobarcmd
     """
 
 def test_teardown():

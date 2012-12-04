@@ -2,7 +2,7 @@
 
 """Test  L{buildpackage}'s get_upstream_tree method"""
 
-import testutils
+import tests.testutils as testutils
 
 import gbp.errors
 import gbp.scripts.buildpackage as buildpackage
@@ -58,7 +58,7 @@ class TestGetUpstreamTree(testutils.DebianGitTestRepo):
     def test_valid_tag(self):
         """Write out index file to nonexistant dir"""
         self.add_file('foo')
-        tree = self.repo.rev_parse('master')
+        self.repo.rev_parse('master')
         cp = { 'Upstream-Version': '1.0~rc3' }
         self.repo.create_tag('upstream/1.0_rc3')
         options = MockOptions(upstream_tree="TAG",

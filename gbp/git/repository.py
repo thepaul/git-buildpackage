@@ -16,9 +16,9 @@
 #    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 """A Git repository"""
 
-import re
 import subprocess
 import os.path
+import re
 from collections import defaultdict
 
 import gbp.log as log
@@ -163,6 +163,39 @@ class GitRepository(object):
         except CommandExecFailed as excobj:
             raise GitRepositoryError("Error running git %s: %s" %
                                      (command, excobj))
+
+    def _cmd_has_feature(self, command, feature):
+        """
+        Check if the git command has certain feature enabled.
+
+        @param command: git command
+        @type command: C{str}
+        @param feature: feature / command option to check
+        @type feature: C{str}
+        @return: True if feature is supported
+        @rtype: C{bool}
+        """
+        args = GitArgs(command, '-m')
+        help, foo, ret = self._git_inout('help', args.args)
+        if ret:
+            raise GitRepositoryError("Invalid git command: %s" % command)
+
+        # Parse git command man page
+        section_re = re.compile(r'^(?P<section>[A-Z].*)')
+        option_re = re.compile(r'--?(?P<name>[a-zA-Z\-]+).*')
+        man_section = None
+        for line in help.splitlines():
+            if man_section == "OPTIONS" and line.startswith('       -'):
+                opts = line.split(',')
+                for opt in opts:
+                    match = option_re.match(opt.strip())
+                    if match and match.group('name') == feature:
+                        return True
+            # Check man section
+            match = section_re.match(line)
+            if match:
+                man_section = match.group('section')
+        return False
 
     @property
     def path(self):
@@ -322,7 +355,7 @@ class GitRepository(object):
         args.add(commit2)
         sha1, stderr, ret = self._git_inout('merge-base', args.args, capture_stderr=True)
         if not ret:
-            return sha1.strip()
+            return self.strip_sha1(sha1)
         else:
             raise GitRepositoryError("Failed to get common ancestor: %s" % stderr.strip())
 
@@ -339,7 +372,11 @@ class GitRepository(object):
         """
         args = GitArgs()
         args.add_cond(verbose, '--summary', '--no-summary')
-        args.add_cond(edit, '--edit', '--no-edit')
+        if (self._cmd_has_feature('merge', 'edit')):
+            args.add_cond(edit, '--edit', '--no-edit')
+        else:
+            log.debug("Your git suite doesn't support --edit/--no-edit "
+                      "option for git-merge ")
         args.add(commit)
         self._git_command("merge", args.args)
 
@@ -558,10 +595,11 @@ class GitRepository(object):
             args += [ '--match' , pattern ]
         args += [ commit ]
 
-        tag, ret = self._git_getoutput('describe', args)
+        tag, err, ret = self._git_inout('describe', args, capture_stderr=True)
         if ret:
-            raise GitRepositoryError("Can't find tag for %s" % commit)
-        return tag[0].strip()
+            raise GitRepositoryError("Can't find tag for %s. Git error: %s" % \
+                                         (commit, err.strip()))
+        return tag.strip()
 
     def get_tags(self, pattern=None):
         """
@@ -675,7 +713,34 @@ class GitRepository(object):
         sha, ret = self._git_getoutput('rev-parse', args.args)
         if ret:
             raise GitRepositoryError("revision '%s' not found" % name)
-        return sha[0].strip()
+        return self.strip_sha1(sha[0], short)
+
+    @staticmethod
+    def strip_sha1(sha1, length=0):
+        """
+        Strip a given sha1 and check if the resulting
+        hash has the expected length.
+
+        >>> GitRepository.strip_sha1('  58ef37dbeb12c44b206b92f746385a6f61253c0a\\n')
+        '58ef37dbeb12c44b206b92f746385a6f61253c0a'
+        >>> GitRepository.strip_sha1('58ef37d', 10)
+        Traceback (most recent call last):
+        ...
+        GitRepositoryError: '58ef37d' is not a valid sha1 of length 10
+        >>> GitRepository.strip_sha1('58ef37d', 7)
+        '58ef37d'
+        >>> GitRepository.strip_sha1('foobar')
+        Traceback (most recent call last):
+        ...
+        GitRepositoryError: 'foobar' is not a valid sha1
+        """
+        s = sha1.strip()
+        l = length if length else 40
+
+        if len(s) != l:
+            raise GitRepositoryError("'%s' is not a valid sha1%s" %
+                                     (s, " of length %d" % l if length else ""))
+        return s
 
 #{ Trees
     def checkout(self, treeish):
@@ -736,7 +801,7 @@ class GitRepository(object):
                                           capture_stderr=True)
         if ret:
             raise GitRepositoryError("Failed to mktree: '%s'" % err)
-        return sha1.strip()
+        return self.strip_sha1(sha1)
 
     def get_obj_type(self, obj):
         """
@@ -1020,7 +1085,7 @@ class GitRepository(object):
                                             args.args,
                                             capture_stderr=True)
         if not ret:
-            return sha1.strip()
+            return self.strip_sha1(sha1)
         else:
             raise GbpError("Failed to hash %s: %s" % (filename, stderr))
 #}
@@ -1164,7 +1229,7 @@ class GitRepository(object):
                                             extra_env,
                                             capture_stderr=True)
         if not ret:
-            return sha1.strip()
+            return self.strip_sha1(sha1)
         else:
             raise GbpError("Failed to commit tree: %s" % stderr)
 
@@ -1192,7 +1257,10 @@ class GitRepository(object):
         args = GitArgs('--pretty=format:%H')
         args.add_true(num, '-%d' % num)
         args.add_true(first_parent, '--first-parent')
-        args.add_true(since and until, '%s..%s' % (since, until))
+        if since:
+            args.add("%s..%s" % (since, until or 'HEAD'))
+        elif until:
+            args.add(until)
         args.add_cond(options, options)
         args.add("--")
         if isinstance(paths, basestring):
@@ -1248,20 +1316,22 @@ class GitRepository(object):
                                      % commit)
         return out[0].strip()
 
-    def get_commit_info(self, commit):
+    def get_commit_info(self, commitish):
         """
-        Look up data of a specific commit
+        Look up data of a specific commit-ish. Dereferences given commit-ish
+        to the commit it points to.
 
-        @param commit: the commit to inspect
+        @param commitish: the commit-ish to inspect
         @return: the commit's including id, author, email, subject and body
         @rtype: dict
         """
+        commit_sha1 = self.rev_parse("%s^0" % commitish)
         args = GitArgs('--pretty=format:%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b%x00',
-                       '-z', '--date=raw', '--name-status', commit)
+                       '-z', '--date=raw', '--name-status', commit_sha1)
         out, err, ret =  self._git_inout('show', args.args)
         if ret:
             raise GitRepositoryError("Unable to retrieve commit info for %s"
-                                     % commit)
+                                     % commitish)
 
         fields = out.split('\x00')
 
@@ -1281,7 +1351,7 @@ class GitRepository(object):
             path = file_fields.pop(0)
             files[status].append(path)
 
-        return {'id' : commit,
+        return {'id' : commitish,
                 'author' : author,
                 'committer' : committer,
                 'subject' : fields[6],
@@ -1314,7 +1384,7 @@ class GitRepository(object):
         args.append(patch)
         self._git_command("apply", args)
 
-    def diff(self, obj1, obj2):
+    def diff(self, obj1, obj2, paths=None):
         """
         Diff two git repository objects
 
@@ -1322,11 +1392,17 @@ class GitRepository(object):
         @type obj1: C{str}
         @param obj2: second object
         @type obj2: C{str}
+        @param paths: List of paths to diff
+        @type paths: C{list}
         @return: diff
         @rtype: C{str}
         """
         options = GitArgs(obj1, obj2)
-        output, ret = self._git_getoutput('diff', options.args)
+        if paths:
+            options.add('--', paths)
+        output, stderr, ret = self._git_inout('diff', options.args)
+        if ret:
+            raise GitRepositoryError("Git diff failed")
         return output
 #}
 
@@ -1370,7 +1446,7 @@ class GitRepository(object):
             otherwise
         @rtype: C{bool}
         """
-        if os.path.exists('.gitmodules'):
+        if os.path.exists(os.path.join(self.path, '.gitmodules')):
             return True
         else:
             return False
@@ -1423,7 +1499,7 @@ class GitRepository(object):
         # the latter.
         submodules = []
         if path is None:
-            path = "."
+            path = self.path
 
         args = [ treeish ]
         if recursive:
@@ -1434,8 +1510,9 @@ class GitRepository(object):
             mode, objtype, commit, name = line[:-1].split(None, 3)
             # A submodules is shown as "commit" object in ls-tree:
             if objtype == "commit":
-                nextpath = os.path.sep.join([path, name])
-                submodules.append( (nextpath, commit) )
+                nextpath = os.path.join(path, name)
+                submodules.append( (nextpath.replace(self.path,'').lstrip('/'),
+                                    commit) )
                 if recursive:
                     submodules += self.get_submodules(commit, path=nextpath,
                                                       recursive=recursive)

@@ -5,7 +5,6 @@
 import os
 import shutil
 import tarfile
-import tempfile
 
 import gbp.log
 import gbp.git
@@ -91,7 +90,7 @@ def test_has_submodules():
 def test_get_submodules():
     """Check for submodules list of  (name, hash)"""
     modules = repo.get_submodules("master")[0]
-    assert modules[0] == './test_submodule'
+    assert modules[0] == 'test_submodule'
     assert len(modules[1]) == 40
 
 

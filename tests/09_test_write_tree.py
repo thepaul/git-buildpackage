@@ -4,7 +4,7 @@
 
 import os
 
-import testutils
+import tests.testutils as testutils
 
 import gbp.log
 import gbp.git
@@ -58,7 +58,7 @@ class TestWriteTree(testutils.DebianGitTestRepo):
                                        )
         self.assertEqual(len(commit), 40)
         # commit the same tree again using the previous commit as parent
-        commit2 = self.repo.commit_tree(sha1, "second commit", parents=[commit])
+        self.repo.commit_tree(sha1, "second commit", parents=[commit])
         # commit the same tree again using a non existant parent
         self.assertRaises(gbp.errors.GbpError,
                           self.repo.commit_tree,
